@@ -197,6 +197,64 @@ function syncParser(){ PFParser.setContext({products:S.products, aliases:S.alias
 function searchFoods(q,max=40){ syncParser(); return PFParser.search(q,max); }
 function foodFromRef(ref){ syncParser(); return PFParser.foodFromRef(ref); }
 
+/* ---------- alimentos contados por unidade (ovo, banana, maçã, fatia de pão…) ----------
+   Item com u:{k, c, s}: k = chave da unidade, c = quantas (aceita ½), s = tamanho 'p'|'m'|'g'.
+   g = c × peso de UMA unidade no tamanho s (PFParser.unitGrams). Gramas digitadas à mão apagam o u.
+   Tudo protegido: se o parser ainda não tiver unitInfo/unitGrams, o app só mostra gramas. */
+const SIZES=[['p','P','pequena'],['m','M','média'],['g','G','grande']];
+function unitInfo(ref){ if(!ref || typeof PFParser.unitInfo!=='function') return null; try{ syncParser(); const i=PFParser.unitInfo(ref); return i&&i.k!=null?i:null; }catch(e){ return null; } }
+function unitGrams(k,s,info){
+  if(typeof PFParser.unitGrams==='function'){ try{ const g=Number(PFParser.unitGrams(k,s)); if(g>0) return g; }catch(e){} }
+  const g=Number(info?.[s]); return g>0?g:0;
+}
+/* Pesos por tamanho e rótulo da unidade deste item (ou null se o alimento não é contado por unidade). */
+function unitCtx(it){
+  const info=unitInfo(it.ref); const k=it.u?.k ?? info?.k; if(k==null) return null;
+  const same=!!info && info.k===k, c={k, label:(same&&info.label)||String(k).replace(/_/g,' ')};
+  for(const [s] of SIZES) c[s]=unitGrams(k,s,same?info:null);
+  if(!(c.m>0)) return null;
+  for(const [s] of SIZES) if(!(c[s]>0)) c[s]=c.m;
+  return c;
+}
+const unitTotal=(u,ctx)=>Math.max(1,Math.round((Number(u.c)||1)*(ctx?.[u.s]||ctx?.m||0)));
+function fmtCount(c){ const w=Math.floor(c), h=Math.abs(c-w-0.5)<1e-9; return h?(w?w+'½':'½'):fmt(c,1); }
+const PLURAL_IRR={'pão':'pães',pastel:'pastéis','pé-de-moleque':'pés-de-moleque'};
+function plural(w){ return PLURAL_IRR[w]||(/ão$/.test(w)?w.slice(0,-2)+'ões':/[rzs]$/.test(w)?w+'es':/l$/.test(w)?w.slice(0,-1)+'is':/m$/.test(w)?w.slice(0,-1)+'ns':w+'s'); }
+const pluralFirst=s=>{ const [a,...r]=String(s).split(' '); return [plural(a),...r].join(' '); };
+const unitWord=(c,label)=>c>=2?pluralFirst(label):label;   // “1½ unidade”, “2 unidades” (pt-BR: menos de 2 fica no singular)
+const stepUp=c=>c<2?c+0.5:Math.floor(c)+1;
+const stepDown=c=>c>2?Math.ceil(c)-1:Math.max(0.5,c-0.5);
+/* Novo item a partir de um alimento escolhido: se o alimento é contado por unidade, começa com 1 média. */
+function newItemFrom(f){
+  const it={n:f.n,v:f.v,g:f.porcao||100,src:f.src,ref:f.ref,t:''}; const ctx=unitCtx(it);
+  if(ctx){ it.u={k:ctx.k,c:1,s:'m'}; it.g=unitTotal(it.u,ctx); it.est=true; }
+  return it;
+}
+/* Trocar alimento: unidade → unidade mantém quantidade e tamanho; unidade → gramas mantém as gramas. */
+function applyFood(it,f){
+  Object.assign(it,{n:f.n,v:f.v,src:f.src,ref:f.ref});
+  const prev=it.u; delete it.u;
+  const ctx=unitInfo(f.ref)?unitCtx(it):null;
+  if(ctx && prev){
+    it.u={k:ctx.k,c:Number(prev.c)||1,s:SIZES.some(x=>x[0]===prev.s)?prev.s:'m'}; it.g=unitTotal(it.u,ctx); it.est=true; }
+}
+/* Nome curto para o resumo do cartão: “2 ovos”, “1 banana”, “2 fatias de pão”. */
+/* Nomes curtos para unidades cujo nome na TACO começa por outra palavra (ex.: "Frango, coxa…"). */
+const UNIT_NAME={coxa_frango:['coxa de frango','coxas de frango'],sobrecoxa_frango:['sobrecoxa','sobrecoxas'],bisteca:['bisteca','bistecas'],
+  almondega:['almôndega','almôndegas'],coxinha:['coxinha','coxinhas'],empada:['empada','empadas'],bolinho_arroz:['bolinho de arroz','bolinhos de arroz'],
+  cocada:['cocada','cocadas'],coco_verde:['coco verde','cocos verdes'],ovo_frito:['ovo frito','ovos fritos'],ovo_codorna:['ovo de codorna','ovos de codorna'],
+  clara:['clara de ovo','claras de ovo'],gema:['gema','gemas'],pao_queijo:['pão de queijo','pães de queijo'],pao_hamburguer:['pão de hambúrguer','pães de hambúrguer'],
+  pao_frances:['pão francês','pães franceses'],biscoito_salgado:['biscoito','biscoitos'],biscoito_maisena:['biscoito','biscoitos'],biscoito_recheado:['biscoito recheado','biscoitos recheados'],
+  biscoito_wafer:['wafer','wafers'],biscoito_polvilho:['biscoito de polvilho','biscoitos de polvilho'],pe_moleque:['pé-de-moleque','pés-de-moleque'],bombom:['bombom','bombons'],
+  picole:['picolé','picolés'],batata_doce:['batata-doce','batatas-doces'],acaraje:['acarajé','acarajés']};
+function shortName(it){
+  const base=String(it.n).split(',')[0].trim(); if(!it.u) return base;
+  const nm=UNIT_NAME[it.u.k]; if(nm){ const c=Number(it.u.c)||1; return `${fmtCount(c)} ${c>=2?nm[1]:nm[0]}`; }
+  const c=Number(it.u.c)||1, lbl=unitInfo(it.ref)?.k===it.u.k?unitInfo(it.ref).label:String(it.u.k).replace(/_/g,' ');
+  if(lbl && lbl!=='unidade') return `${fmtCount(c)} ${unitWord(c,lbl)} de ${base.toLowerCase()}`;
+  const b=base.toLowerCase(); return /\s/.test(b)?`${fmtCount(c)}× ${b}`:`${fmtCount(c)} ${c>=2?plural(b):b}`;
+}
+
 /* ---------- Open Food Facts ---------- */
 /* Devolve o produto, null (não existe no OFF) ou 'net' (sem internet / OFF fora do ar / demorou). */
 async function lookupOFF(code){
@@ -299,13 +357,13 @@ function renderHoje(){
     const card=el('div',{class:'meal'},el('button',{class:'head','aria-expanded':String(open),onclick:()=>{S.open[key]=!open; renderHoje();}},
       el('span',{class:'nm',text:name}),el('span',{class:'kc num',text:fmt(r10(mt[0]))+' kcal'}),
       el('span',{class:'mac num',text:`P ${fmt(mt[1])} g · C ${fmt(mt[2])} g · G ${fmt(mt[3])} g`}),el('span'),
-      el('span',{class:'foods',text:items.map(i=>String(i.n).split(',')[0]).join(', ')})));
+      el('span',{class:'foods',text:items.map(shortName).join(', ')})));
     if(open){
       const body=el('div',{class:'body'});
-      items.forEach((it,ii)=>body.append(itemRow(it,{
-        onGrams:g=>{ it.g=g; saveDaySoon(day); }, onDone:()=>renderHoje(),
+      items.forEach((it,ii)=>body.append(itemRow(it,{fk:key+':'+ii,
+        onGrams:g=>{ it.g=g; saveDaySoon(day); }, onDone:()=>renderHoje(), onUnit:()=>renderHojeSoon(),
         onRemove:()=>{ items.splice(ii,1); saveDay(day); renderHoje(); toast('Removido'); },
-        onSwap:()=>openPick(f=>{ Object.assign(it,{n:f.n,v:f.v,src:f.src,ref:f.ref}); if(it.t) learnAlias(it.t,f); saveDay(day); renderHoje(); })})));
+        onSwap:()=>openPick(f=>{ applyFood(it,f); if(it.t) learnAlias(it.t,f); saveDay(day); renderHoje(); })})));
       body.append(el('div',{class:'row-actions'},el('button',{class:'ghost',text:'+ Adicionar aqui',onclick:()=>openAdd(mi)}),el('button',{class:'ghost',text:'Salvar como refeição',onclick:()=>saveMealPreset(name,items)})));
       card.append(body);
     }
@@ -313,6 +371,7 @@ function renderHoje(){
   });
   if(all.length) v.append(meals);
   if(empties.length) v.append(el('div',{class:'empty-chips'},empties));
+  restoreFocus(v);
 
   if(all.length){
     const alerts=[];
@@ -335,25 +394,63 @@ let rT; function renderHojeSoon(){ clearTimeout(rT); rT=setTimeout(renderHoje,45
 /* Edição de gramas grava com atraso; qualquer leitura do mesmo dia grava antes (evita sobrescrever com dado velho). */
 let sdT, sdDay=null; function saveDaySoon(d){ sdDay=d; clearTimeout(sdT); sdT=setTimeout(flushDaySoon,600); }
 function flushDaySoon(){ clearTimeout(sdT); const d=sdDay; sdDay=null; if(d) Store.set('day-'+d.date, d); }
-function itemRow(it,{onGrams,onRemove,onSwap,onDone}){
+/* Linha de um alimento (confirmação no "Registrar" e cartões de "Hoje").
+   onGrams(g): gramas mudaram (persistir). onDone: digitação terminou (change). onUnit: quantidade/tamanho mudou.
+   fk: prefixo para devolver o foco ao botão tocado depois de redesenhar a tela. */
+function itemRow(it,{onGrams,onRemove,onSwap,onDone,onUnit,fk}){
   const name=el('div',{class:'n'});
   name.append(onSwap?el('button',{text:it.n,onclick:onSwap,title:'Trocar alimento'}):it.n);
   if(it.src==='est') name.append(el('span',{class:'est',text:'média'}));
-  if(it.est) name.append(el('span',{class:'est',text:'porção estimada'}));
+  const estTag=el('span',{class:'est',text:'porção estimada'}); if(it.est) name.append(estTag);
   if(it.t && norm(it.t)!==norm(it.n)) name.append(el('small',{text:'você disse: '+it.t}));
   const gin=el('input',{class:'gin num',type:'number',inputmode:'numeric',min:'0',step:'5',value:String(it.g),'aria-label':'Gramas de '+it.n});
   const v=it.v||[]; const f=i=>fmt((Number(v[i])||0)*(Number(it.g)||0)/100);
   const meta=el('div',{class:'m num'});
   const upd=()=>meta.textContent=`${fmt(Math.round((Number(v[0])||0)*(Number(it.g)||0)/100))} kcal  ·  P ${f(1)} · C ${f(2)} · G ${f(3)} g`;
   upd();
+  const ctx=unitCtx(it); const unitBox=el('div',{class:'unit'});
+  const mark=s=>{ if(fk) S.refocus=fk+':'+s; };
+  // quantidade/tamanho mudou: recalcula gramas sem redesenhar a linha toda
+  const setUnit=(s)=>{ it.g=unitTotal(it.u,ctx); it.est=true; if(!estTag.isConnected) name.insertBefore(estTag,name.querySelector('small')); gin.value=String(it.g);
+    onGrams(it.g); upd(); mark(s); drawUnit();
+    const b=unitBox.querySelector(`[data-fk="${s}"]:not([disabled])`)||unitBox.querySelector('.stepper button:not([disabled])'); try{ b?.focus({preventScroll:true}); }catch(e){}
+    onUnit?.(); };
+  function drawUnit(){
+    unitBox.replaceChildren(); if(!ctx){ unitBox.hidden=true; return; } unitBox.hidden=false;
+    if(!it.u){
+      unitBox.append(el('button',{class:'ghost sm','data-fk':'tog',text:'por unidade','aria-label':`Contar ${it.n} por ${ctx.label}`,onclick:()=>{
+        const c=Math.max(0.5,Math.round((Number(it.g)||ctx.m)/ctx.m*2)/2); it.u={k:ctx.k,c,s:'m'}; setUnit('minus'); }}));
+      return;
+    }
+    const c=Number(it.u.c)||1; if(!SIZES.some(x=>x[0]===it.u.s)) it.u.s='m';
+    const qty=el('span',{class:'q num','aria-live':'polite',text:`${fmtCount(c)} ${unitWord(c,ctx.label)}`});
+    const step=el('div',{class:'stepper',role:'group','aria-label':'Quantidade de '+it.n},
+      el('button',{type:'button','data-fk':'minus','aria-label':'Menos '+(c<=2?'meia':'uma')+' '+ctx.label,text:'−',disabled:c<=0.5,onclick:()=>{ it.u.c=stepDown(Number(it.u.c)||1); setUnit('minus'); }}),
+      qty,
+      el('button',{type:'button','data-fk':'plus','aria-label':'Mais '+(c<2?'meia':'uma')+' '+ctx.label,text:'+',onclick:()=>{ it.u.c=stepUp(Number(it.u.c)||1); setUnit('plus'); }}));
+    const sizes=el('div',{class:'sizes',role:'group','aria-label':'Tamanho'},
+      ...SIZES.map(([s,L,full])=>el('button',{type:'button','data-fk':'s'+s,class:'chip sz'+(it.u.s===s?' on':''),'aria-pressed':String(it.u.s===s),
+        'aria-label':`${full}, ${fmt(ctx[s])} g cada`,title:`${full} · ${fmt(ctx[s])} g`,text:L,onclick:()=>{ it.u.s=s; setUnit('s'+s); }})));
+    const S_=SIZES.find(x=>x[0]===it.u.s);
+    unitBox.append(step,sizes,el('span',{class:'cap num',text:`${S_[1]} · ${fmt(ctx[it.u.s])} g cada`}));
+  }
+  drawUnit();
   // não redesenha a tela enquanto digita (no iPhone isso fecha o teclado); totais do dia atualizam ao sair do campo
-  gin.addEventListener('input',()=>{ const g=Math.max(0,Math.round(+String(gin.value).replace(',','.')||0)); it.est=false; onGrams(g); upd(); });
+  gin.addEventListener('input',()=>{ const g=Math.max(0,Math.round(+String(gin.value).replace(',','.')||0)); it.est=false; estTag.remove();
+    if(it.u){ delete it.u; drawUnit(); }   // gramas à mão: deixa de contar por unidade (o botão “por unidade” volta)
+    onGrams(g); upd(); });
   if(onDone) gin.addEventListener('change',onDone);
-  return el('div',{class:'item'},name,el('div',{class:'ctl'},gin,el('span',{text:'g'}),el('button',{class:'x','aria-label':'Remover '+it.n,text:'×',onclick:onRemove})),meta);
+  const row=el('div',{class:'item'},name,el('div',{class:'ctl'},gin,el('span',{text:'g'}),el('button',{class:'x','aria-label':'Remover '+it.n,text:'×',onclick:onRemove})),unitBox,meta);
+  if(fk) row.dataset.fk=fk;
+  return row;
 }
+/* Depois de redesenhar, devolve o foco ao botão de quantidade/tamanho que foi tocado. */
+function restoreFocus(root){ const f=S.refocus; if(!f) return; S.refocus=null; const i=f.lastIndexOf(':');
+  const b=root.querySelector(`.item[data-fk="${CSS.escape(f.slice(0,i))}"] [data-fk="${f.slice(i+1)}"]`)||root.querySelector(`.item[data-fk="${CSS.escape(f.slice(0,i))}"] .stepper button:not([disabled])`);
+  try{ b?.focus({preventScroll:true}); }catch(e){} }
 function learnAlias(term,f){ const k=norm(term); if(!k||!f?.ref) return; S.aliases[k]={ref:f.ref,n:f.n}; saveAliases(); }
 function saveMealPreset(name,items){ let key=name,i=2; while(S.meals[key]) key=name+' '+(i++);
-  S.meals[key]=items.map(x=>({n:x.n,v:x.v,g:x.g,src:x.src,ref:x.ref||null})); saveMeals(); toast('Salva como “'+key+'”'); }
+  S.meals[key]=items.map(x=>({n:x.n,v:x.v,g:x.g,src:x.src,ref:x.ref||null,...(x.u?{u:{...x.u}}:{}),...(x.est?{est:true}:{})})); saveMeals(); toast('Salva como “'+key+'”'); }
 
 /* ---------- tela: Semana ---------- */
 function weekDates(anchor){ const d=parseIso(anchor); const off=(d.getDay()-S.settings.weekStart+7)%7; d.setDate(d.getDate()-off); const s=iso(d); return [...Array(7)].map((_,i)=>addDays(s,i)); }
@@ -507,19 +604,19 @@ function renderChips(){ $('#mealChips').replaceChildren(...S.settings.meals.map(
 function setStatus(text,busy){ const b=$('#statusBox'); b.replaceChildren(); if(!text) return; const row=el('div',{class:busy?'status':'err'}); if(busy) row.append(el('div',{class:'spin'})); row.append(el('span',{text})); b.append(row); }
 function renderConfirm(){
   const box=$('#confirmBox'); box.replaceChildren();
-  const addManual=el('button',{class:'ghost',text:'+ Buscar alimento',onclick:()=>openPick(f=>{ A.items.push({n:f.n,v:f.v,g:f.porcao||100,src:f.src,ref:f.ref,t:''}); renderConfirm(); })});
+  const addManual=el('button',{class:'ghost',text:'+ Buscar alimento',onclick:()=>openPick(f=>{ A.items.push(newItemFrom(f)); renderConfirm(); })});
   if(!A.items.length){ box.append(addManual); return; }
   const c=el('div',{class:'confirm'}); const tot=el('div',{class:'total num'});
   const upd=()=>{ const t=totals(A.items); tot.replaceChildren(el('span',{text:'Total'}),el('span',{text:`${fmt(r10(t[0]))} kcal · P ${fmt(t[1])} · C ${fmt(t[2])} · G ${fmt(t[3])}`})); };
   A.items.forEach((it,i)=>c.append(itemRow(it,{onGrams:g=>{it.g=g;upd();},onRemove:()=>{A.items.splice(i,1);renderConfirm();},
-    onSwap:()=>openPick(f=>{ Object.assign(it,{n:f.n,v:f.v,src:f.src,ref:f.ref}); if(it.t) learnAlias(it.t,f); renderConfirm(); })})));
+    onSwap:()=>openPick(f=>{ applyFood(it,f); if(it.t) learnAlias(it.t,f); renderConfirm(); })})));
   upd(); c.append(tot);
   box.append(el('p',{class:'note',text:'Confira as quantidades. Toque no nome para trocar o alimento; o app aprende a troca.'}),c,addManual,
     el('button',{class:'btn wide',text:'Salvar em '+S.settings.meals[A.meal],onclick:commit}));
 }
 function commit(){
   const items=A.items.filter(i=>i.g>0); if(!items.length){ toast('Informe os gramas'); return; }
-  const d=ensureDay(S.date); d.meals[A.meal].push(...items.map(i=>({n:i.n,v:i.v,g:i.g,src:i.src,ref:i.ref||null,t:i.t||'',...(i.est?{est:true}:{})})));
+  const d=ensureDay(S.date); d.meals[A.meal].push(...items.map(i=>({n:i.n,v:i.v,g:i.g,src:i.src,ref:i.ref||null,t:i.t||'',...(i.u?{u:{k:i.u.k,c:Number(i.u.c)||1,s:i.u.s||'m'}}:{}),...(i.est?{est:true}:{})})));
   saveDay(d); S.open[S.date+':'+A.meal]=true; const name=S.settings.meals[A.meal]; closeAll(); toast('Registrado em '+name); go('hoje');
 }
 function runParse(){
@@ -539,7 +636,7 @@ function showSaved(){
   const c=el('div',{class:'card'},el('div',{class:'eyebrow',text:'Repetir uma refeição'}));
   if(!rows.length) c.append(el('p',{class:'note',style:'margin-top:6px',text:'Ainda não há refeições salvas nem registros de ontem. No cartão de uma refeição, toque em “Salvar como refeição”.'}));
   const l=el('div',{class:'results'});
-  for(const [label,it] of rows) l.append(el('button',{onclick:()=>{ A.items.push(...it.map(x=>({...x,v:[...x.v],t:''}))); box.replaceChildren(); renderConfirm(); }},el('span',{text:label}),el('span',{class:'num',text:fmt(r10(totals(it)[0]))+' kcal'})));
+  for(const [label,it] of rows) l.append(el('button',{onclick:()=>{ A.items.push(...it.map(x=>({...x,v:[...x.v],t:'',...(x.u?{u:{...x.u}}:{})}))); box.replaceChildren(); renderConfirm(); }},el('span',{text:label}),el('span',{class:'num',text:fmt(r10(totals(it)[0]))+' kcal'})));
   c.append(l); box.append(c);
 }
 

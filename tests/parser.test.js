@@ -90,7 +90,98 @@ t('200 gramas de abacaxi e 50 g de zzzqwk', null, [['Abacaxi, cru',200]], ['zzzq
 t('Refeição 2. 120g de tilápia; 1 batata cozida\n1 colher de azeite', 1, [['Tilápia',120],['Batata, inglesa, cozida',130],['Azeite',10]]);
 t('um copo de leite com achocolatado', null, [['achocolatado',250]]);
 t('meia banana', null, [['Banana, prata',35]]);
-t('uma banana grande', null, [['Banana, prata',105]]);
+t('uma banana grande', null, [['Banana, prata',90]]); // antes 70×1,5=105; agora banana prata G (UNIT_SIZES)
+
+console.log('Tamanhos por unidade (P/M/G)');
+{ const U = P.unitSizes;
+  // u = {k, c, s}; g = c × unitGrams(k, s); est sempre true
+  function tu(phrase, name, k, c, s){
+    const r = P.parse(phrase), it = r.items[0], label = JSON.stringify(phrase);
+    ok(r.items.length >= 1 && it.n.includes(name), `${label}: alimento ${it && it.n} (esperado ${name})`);
+    if(!it) return;
+    ok(it.u && it.u.k === k && it.u.c === c && it.u.s === s, `${label}: u ${JSON.stringify(it.u)} (esperado ${JSON.stringify({k, c, s})})`);
+    if(it.u) ok(it.g === Math.max(1, Math.round(c * P.unitGrams(k, s))), `${label}: g ${it.g} = c × unitGrams`);
+    ok(it.est === true, `${label}: est true`);
+  }
+  tu('2 ovos', 'Ovo, de galinha, inteiro, cozido', 'ovo', 2, 'm');
+  tu('uma maçã', 'Maçã', 'maca', 1, 'm');
+  tu('meia banana', 'Banana, prata', 'banana_prata', .5, 'm');
+  tu('1 unidade de ovo', 'Ovo, de galinha', 'ovo', 1, 'm');
+  tu('uma unidade grande de banana', 'Banana, prata', 'banana_prata', 1, 'g');
+  tu('2 ovos grandes', 'Ovo, de galinha', 'ovo', 2, 'g');
+  tu('banana pequena', 'Banana, prata', 'banana_prata', 1, 'p');
+  tu('1 banana média', 'Banana, prata', 'banana_prata', 1, 'm');
+  tu('duas laranjas grandes', 'Laranja, pêra', 'laranja', 2, 'g');
+  tu('banana', 'Banana, prata', 'banana_prata', 1, 'm');
+  tu('um ovo tamanho grande', 'Ovo, de galinha', 'ovo', 1, 'g');
+  tu('2 ovos gde', 'Ovo, de galinha', 'ovo', 2, 'g');
+  tu('banana peq', 'Banana, prata', 'banana_prata', 1, 'p');
+  tu('uma banana grandona', 'Banana, prata', 'banana_prata', 1, 'g');
+  tu('uma banana da terra grande', 'Banana, da terra', 'banana_terra', 1, 'g');
+  tu('duas bananas nanicas pequenas', 'Banana, nanica', 'banana_nanica', 2, 'p');
+  tu('uma laranja e meia', 'Laranja', 'laranja', 1.5, 'm');
+  tu('3 ovos de codorna', 'Ovo, de codorna', 'ovo_codorna', 3, 'm');
+  tu('ovo frito', 'Ovo, de galinha, inteiro, frito', 'ovo_frito', 1, 'm');
+  tu('1 fatia de pão de forma', 'Pão, trigo, forma', 'pao_forma', 1, 'm');
+  tu('2 fatias de bolo', 'Bolo', 'bolo', 2, 'm');
+  tu('uma fatia grande de pizza', 'Pizza', 'pizza', 1, 'g');
+  tu('fatia fina de pizza', 'Pizza', 'pizza', 1, 'p');
+  tu('1 fatia de cuscuz', 'Cuscuz, de milho', 'cuscuz', 1, 'm');
+  tu('pão de forma', 'Pão, trigo, forma', 'pao_forma', 2, 'm');
+  tu('duas espigas de milho', 'Milho verde, cozido', 'milho_espiga', 2, 'm');
+  tu('um pote de iogurte', 'Iogurte', 'iogurte', 1, 'm');
+  tu('um bife grande', 'patinho', 'bife', 1, 'g');
+  tu('um filé de frango', 'Frango, peito', 'file_frango', 1, 'm');
+  tu('uma coxinha pequena', 'Coxinha', 'coxinha', 1, 'p');
+  tu('2 pães de queijo pequenos', 'Pão, de queijo', 'pao_queijo', 2, 'p');
+  tu('uma ponkan', 'Tangerina, Poncã', 'tangerina', 1, 'm');
+  tu('3 pupunhas grandes', 'Pupunha', 'pupunha', 3, 'g');
+  tu('um coco verde', 'Coco, água de', 'coco_verde', 1, 'm');
+  tu('meio abacate', 'Abacate', 'abacate', .5, 'm');
+  tu('uma esfiha', 'Esfiha', 'esfiha', 1, 'm');
+  tu('um picolé', 'Picolé', 'picole', 1, 'm');
+  { const r = P.parse('comi uma maçã e um ovo');
+    ok(r.items.length === 2 && r.items[0].u.k === 'maca' && r.items[1].u.k === 'ovo' && r.items[0].g === 130 && r.items[1].g === 50, 'maçã e ovo sem quantidade explícita → 1 unidade média cada'); }
+  { const r = P.parse('uma esfiha e uma coxinha pequena');
+    ok(r.items.length === 2 && r.items[0].u.s === 'm' && r.items[1].u.s === 'p', 'tamanho fica no próprio item'); }
+  // gramas explícitos e medidas não unitárias: sem u
+  { const it = P.parse('100 g de banana').items[0]; ok(it && it.g === 100 && !it.u && it.est === false, '100 g de banana → sem u, est false'); }
+  { const it = P.parse('banana 150 gramas').items[0]; ok(it && it.g === 150 && !it.u && it.est === false, 'banana 150 gramas → sem u'); }
+  { const it = P.parse('200 de banana').items[0]; ok(it && it.g === 200 && !it.u, '200 de banana → gramas, sem u'); }
+  { const it = P.parse('um pouco de banana').items[0]; ok(it && !it.u, '"um pouco" não vira unidade'); }
+  { const it = P.parse('um copo grande de suco de laranja').items[0]; ok(it && !it.u && it.g === 375, 'copo grande continua multiplicador genérico'); }
+  { const it = P.parse('uma colher cheia de arroz').items[0]; ok(it && !it.u && it.g === 33, 'colher cheia continua multiplicador'); }
+  { const it = P.parse('um gomo de laranja').items[0]; ok(it && !it.u && it.g === 10, 'gomo de laranja não é unidade'); }
+  { const it = P.parse('frango').items[0]; ok(it && !it.u && it.g === 120, '"frango" sozinho não vira filé contado'); }
+  { const it = P.parse('chocolate').items[0]; ok(it && !it.u, '"chocolate" sozinho não vira barra'); }
+  { const it = P.parse('água de coco').items[0]; ok(it && !it.u && it.g === 300, '"água de coco" é bebida, não coco verde'); }
+  { const r = P.parse('salada'); ok(r.items.every(i => !i.u), 'combos não recebem u'); }
+  // API
+  ok(typeof P.unitInfo === 'function' && typeof P.unitGrams === 'function' && U && typeof U === 'object', 'API de unidades exposta');
+  ok(Object.isFrozen(U) && Object.isFrozen(U.ovo), 'unitSizes somente leitura');
+  ok(Object.keys(U).length >= 60, `UNIT_SIZES tem ${Object.keys(U).length} chaves (>= 60)`);
+  const ref = n => P._internal.foodByName(n).ref;
+  { const u = P.unitInfo(ref('Ovo, de galinha, inteiro, cozido/10minutos')); ok(u && u.k === 'ovo' && u.label === 'unidade' && u.p === 40 && u.m === 50 && u.g === 60, 'unitInfo ovo'); }
+  { const u = P.unitInfo(ref('Banana, da terra, crua')); ok(u && u.k === 'banana_terra' && u.m > U.banana_prata.m, 'unitInfo banana da terra maior que prata'); }
+  { const u = P.unitInfo(ref('Pão, trigo, forma, integral')); ok(u && u.k === 'pao_forma' && u.label === 'fatia', 'unitInfo pão de forma → fatia'); }
+  { const u = P.unitInfo(ref('Pizza de mussarela (média)')); ok(u && u.label === 'fatia' && u.m === 110, 'unitInfo pizza'); }
+  { const u = P.unitInfo(ref('Frango, peito, sem pele, grelhado')); ok(u && u.k === 'file_frango' && u.label === 'filé', 'unitInfo peito de frango → filé'); }
+  { const u = P.unitInfo(ref('Iogurte, natural')); ok(u && u.label === 'pote', 'unitInfo iogurte → pote'); }
+  { const u = P.unitInfo(ref('Chocolate, ao leite')); ok(u && u.k === 'chocolate_barra', 'unitInfo chocolate → barra (bombom só pelo nome dito)'); }
+  ok(P.unitInfo(ref('Arroz, tipo 1, cozido')) === null, 'unitInfo arroz → null');
+  ok(P.unitInfo(ref('Coco, água de')) === null, 'unitInfo água de coco → null (coco verde só pelo nome dito)');
+  ok(P.unitInfo('P123') === null && P.unitInfo('X1') === null && P.unitInfo(null) === null, 'unitInfo produto/inválido → null');
+  ok(P.unitGrams('ovo', 'g') === 60 && P.unitGrams('ovo') === 50 && P.unitGrams('ovo', 'p') === 40, 'unitGrams ovo');
+  ok(P.unitGrams('xyz', 'm') === null && P.unitGrams('ovo', 'x') === null, 'unitGrams inválido → null');
+  // auditoria da tabela
+  const names = new Set(TACO.map(r => r[0]).concat(P._internal.EXTRAS.map(r => r[0])));
+  for(const [k, e] of Object.entries(U)){
+    ok(typeof e.label === 'string' && e.label === e.label.toLowerCase() && !/s$/.test(e.label), `UNIT_SIZES.${k} label singular "${e.label}"`);
+    ok(e.p > 0 && e.p < e.m && e.m < e.g, `UNIT_SIZES.${k} p<m<g (${e.p}/${e.m}/${e.g})`);
+    ok(Array.isArray(e.match) && e.match.length > 0, `UNIT_SIZES.${k} tem match`);
+    for(const n of e.match){ ok(names.has(n), `UNIT_SIZES.${k} → "${n}" existe na TACO/EXTRAS`); const f = P._internal.foodByName(n); ok(f && f.v[0] > 0, `UNIT_SIZES.${k} → "${n}" tem kcal`); }
+  }
+}
 
 console.log('Refeição com nomes personalizados');
 P.setContext({mealNames:['Pré-treino','Pós-treino','Almoço','Jantar']});

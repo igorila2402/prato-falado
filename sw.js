@@ -1,7 +1,7 @@
 // Cache do app para abrir rápido e funcionar sem internet.
 // IMPORTANTE: troque VERSION a cada publicação (qualquer mudança em index.html, app.js, label.js, parser.js,
 // taco.json…). O iPhone confere o sw.js a cada abertura; versão nova = cache novo.
-const VERSION = '2026-10-28.2';
+const VERSION = '2026-10-28.5';
 const CACHE = 'pf-' + VERSION;
 const LOCAL = ['./','index.html','app.js','parser.js','label.js','config.js','taco.json','manifest.webmanifest','icon-192.png','icon-512.png','apple-touch-icon.png'];
 const CDN = ['https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js',

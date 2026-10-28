@@ -3,7 +3,9 @@
    Uso no navegador: <script src="parser.js"></script> → window.PFParser
    Uso no Node (testes): const PFParser = require('./parser.js')
    API: init(tacoRows), setContext({products, aliases, mealNames}), parse(text),
-        search(q, max), foodFromRef(ref), norm(str). */
+        search(q, max), foodFromRef(ref), norm(str),
+        unitInfo(ref) → {k,label,p,m,g}|null, unitGrams(k,'p'|'m'|'g') → g de 1 unidade, unitSizes (tabela, só leitura).
+   Itens contados por unidade trazem u:{k, c (quantidade), s:'p'|'m'|'g'} e g = c × unitGrams(k,s). */
 (function(root){
 
 /* ---------- Alimentos comuns que faltam na TACO (por 100 g) ----------
@@ -33,6 +35,15 @@ const EXTRAS = [
   ['Peito de peru, fatiado (média)',100,18,2,2,0,1000,10,0.6,0,300,20,1],
   ['Sopa de legumes (média)',45,1.5,7,1.2,1.2,250,15,0.4,4,150,10,0.2],
   ['Caldo de carne com legumes (média)',60,4.5,5,2.5,0.8,300,12,0.6,3,160,10,0.8],
+  // alimentos comidos por unidade que faltam na TACO (valores médios de rótulos/USDA)
+  ['Milho verde, cozido (média)',98,3.4,21,1.5,2.4,1,3,0.5,5.5,218,26,0.6],
+  ['Bisnaguinha (média)',310,9,54,6,2,450,60,1.5,0,120,20,0.6],
+  ['Croissant (média)',406,8.2,45.8,21,2.6,470,37,2,0,118,16,0.8],
+  ['Sanduíche natural (média)',200,11,25,6,2,450,60,1.2,3,200,20,1],
+  ['Esfiha, de carne (média)',260,11,34,9,1.8,480,40,2,1,180,20,1.5],
+  ['Enroladinho de salsicha, assado (média)',320,10,32,17,1.5,700,30,1.8,0,150,15,1],
+  ['Picolé, de fruta (média)',100,0.3,25,0,0.3,10,5,0.1,5,60,3,0],
+  ['Picolé, de chocolate (média)',230,3,25,13,1,50,90,0.5,0,180,20,0.5],
 ];
 
 /* ---------- Termos do dia a dia → nome exato na TACO/EXTRAS ----------
@@ -98,6 +109,14 @@ const SYN = {
   'acucar':'Açúcar, refinado','acucar mascavo':'Açúcar, mascavo','acucar cristal':'Açúcar, cristal','mel':'Mel, de abelha','melado':'Melado','rapadura':'Rapadura','doce de leite':'Doce, de leite, cremoso','goiabada':'Goiaba, doce em pasta','marmelada':'Marmelada','cocada':'Cocada branca','quindim':'Quindim','doce de abobora':'Doce, de abóbora, cremoso','bananada':'Banana, doce em barra','geleia':'Geléia, mocotó, natural',
   'chocolate':'Chocolate, ao leite','chocolate ao leite':'Chocolate, ao leite','chocolate amargo':'Chocolate, meio amargo','chocolate meio amargo':'Chocolate, meio amargo','bombom':'Chocolate, ao leite','barra de chocolate':'Chocolate, ao leite','sorvete':'Sorvete, de massa (média)','gelatina':'Gelatina, sabores variados, pó',
   'shoyu':'Shoyu','molho shoyu':'Shoyu',
+  // comidos por unidade
+  'milho cozido':'Milho verde, cozido (média)','milho verde cozido':'Milho verde, cozido (média)','espiga':'Milho verde, cozido (média)','espiga de milho':'Milho verde, cozido (média)','milho na espiga':'Milho verde, cozido (média)','espiga de milho verde':'Milho verde, cozido (média)',
+  'bisnaguinha':'Bisnaguinha (média)','croissant':'Croissant (média)','sanduiche':'Sanduíche natural (média)','sanduiche natural':'Sanduíche natural (média)','sanduba':'Sanduíche natural (média)',
+  'esfiha':'Esfiha, de carne (média)','esfirra':'Esfiha, de carne (média)','esfiha de carne':'Esfiha, de carne (média)','esfirra de carne':'Esfiha, de carne (média)',
+  'enroladinho':'Enroladinho de salsicha, assado (média)','enroladinho de salsicha':'Enroladinho de salsicha, assado (média)','enrolado de salsicha':'Enroladinho de salsicha, assado (média)',
+  'picole':'Picolé, de fruta (média)','picole de fruta':'Picolé, de fruta (média)','picole de chocolate':'Picolé, de chocolate (média)','geladinho':'Picolé, de fruta (média)','dindin':'Picolé, de fruta (média)',
+  'coco verde':'Coco, água de','banana figo':'Banana, figo, crua','banana sao tome':'Banana, figo, crua','laranja lima':'Laranja, lima, crua','laranja baia':'Laranja, baía, crua','laranja da terra':'Laranja, da terra, crua','manga palmer':'Manga, Palmer, crua','manga rosa':'Manga, Tommy Atkins, crua',
+  'ovo de codorna':'Ovo, de codorna, inteiro, cru','codorna':'Ovo, de codorna, inteiro, cru','ponkan':'Tangerina, Poncã, crua','poncan':'Tangerina, Poncã, crua','tangerina ponkan':'Tangerina, Poncã, crua','mexerica ponkan':'Tangerina, Poncã, crua',
 };
 
 /* Pratos combinados: termo → partes [nome, fração do peso]. */
@@ -128,7 +147,7 @@ const COMBOS = {
 const MEASURE_G = {concha:130,escumadeira:90,pegador:100,colher:15,colher_cha:5,colher_sobremesa:10,colher_servir:45,xicara:160,
   copo:200,copo_americano:190,copo_duplo:300,copinho:80,caneca:300,lata:350,garrafa:600,garrafinha:500,longneck:355,caixinha:200,taca:150,dose:50,
   fatia:25,rodela:10,pedaco:80,bife:100,file:120,posta:150,espeto:100,unidade:null,prato:300,prato_fundo:400,porcao:100,tigela:300,cumbuca:250,cuia:400,
-  pote:170,pacote:100,saco:30,bola:60,punhado:30,scoop:30,sache:5,tablete:25,barra:25,gomo:60,cacho:150,ponta:5,fio:5};
+  pote:170,pacote:100,saco:30,bola:60,punhado:30,scoop:30,sache:5,tablete:25,barra:25,gomo:60,bago:8,cacho:150,ponta:5,fio:5};
 /* Reconhecimento das medidas (texto já normalizado). Ordem importa: o mais específico primeiro. */
 const MEASURES = [
   ['colher_servir',/^colher(?:es)? (?:de )?(?:servir|servico)\b/],
@@ -143,11 +162,144 @@ const MEASURES = [
   ['unidade',/^(?:unidades?|unid|un)\b/],['prato_fundo',/^pratos? fundos?\b/],['prato',/^prat(?:o|os|inho|inhos)(?: raso| feito)?\b/],['porcao',/^porc(?:ao|oes|aozinha)\b/],
   ['tigela',/^tigel(?:a|as|inha|inhas)\b/],['cumbuca',/^cumbucas?\b/],['cuia',/^cui(?:a|as|nha)\b/],['pote',/^pot(?:e|es|inho|inhos)\b/],['pacote',/^pac(?:ote|otes|otinho|otinhos)\b/],['saco',/^sa(?:co|cos|quinho|quinhos)\b/],
   ['bola',/^bol(?:a|as|inha)(?= de\b)/],['punhado',/^punhados?\b/],['scoop',/^(?:scoops?|medidas?|medidor(?:es)?)\b/],['sache',/^saches?\b/],['tablete',/^tabletes?\b/],['barra',/^barr(?:a|as|inha|inhas)\b/],
-  ['gomo',/^gomos?\b/],['cacho',/^cachos?\b/],['ponta',/^ponta de faca\b/],['fio',/^fio\b/],
+  ['gomo',/^gomos?\b/],['bago',/^bagos?\b/],['cacho',/^cachos?\b/],['ponta',/^ponta de faca\b/],['fio',/^fio\b/],
 ];
 /* Ajustes de tamanho ("copo grande", "colher cheia", "banana pequena"). */
 const SIZE = {grande:1.5,grandes:1.5,grandao:1.7,grandona:1.7,pequeno:.7,pequena:.7,pequenos:.7,pequenas:.7,pequenininho:.5,pequenininha:.5,medio:1,media:1,medios:1,medias:1,
-  cheio:1.3,cheia:1.3,cheios:1.3,cheias:1.3,rasa:.75,raso:.75,rasas:.75,fina:.6,fino:.6,finas:.6,grossa:1.4,grosso:1.4,grossas:1.4,generosa:1.3,generoso:1.3};
+  cheio:1.3,cheia:1.3,cheios:1.3,cheias:1.3,rasa:.75,raso:.75,rasas:.75,fina:.6,fino:.6,finas:.6,grossa:1.4,grosso:1.4,grossas:1.4,generosa:1.3,generoso:1.3,
+  gde:1.5,gdes:1.5,peq:.7,grandoes:1.5,grandonas:1.7};
+
+/* ---------- Tamanhos por unidade (pequena/média/grande) ----------
+   Para alimentos comidos "por unidade" (ou por fatia/pote/espiga...). Gramas da PARTE COMESTÍVEL de 1 unidade.
+   Fontes: Pinheiro et al., "Tabela para Avaliação de Consumo Alimentar em Medidas Caseiras" (5ª ed.);
+   IBGE, POF 2008-2009 "Tabela de Medidas Referidas para os Alimentos Consumidos no Brasil"; tabela de medidas
+   caseiras da UFG (2023); notas da TACO. Valores arredondados e conferidos para p < m < g.
+   label = nome da unidade no SINGULAR (o app pluraliza). match = nomes exatos na TACO/EXTRAS.
+   w (opcional) = o termo dito precisa casar com este regex (ou a medida dita ser a própria unidade/alt);
+   alt = outras medidas que valem como esta unidade; d0 = quantas unidades quando nada é dito (padrão 1). */
+const UNIT_SIZES = {
+  // ovos
+  ovo:{label:'unidade',p:40,m:50,g:60,match:['Ovo, de galinha, inteiro, cozido/10minutos','Ovo, de galinha, inteiro, cru','Ovo, de galinha, mexido (média)']},
+  ovo_frito:{label:'unidade',p:40,m:50,g:60,match:['Ovo, de galinha, inteiro, frito']},
+  ovo_codorna:{label:'unidade',p:8,m:10,g:12,d0:5,match:['Ovo, de codorna, inteiro, cru']},
+  clara:{label:'unidade',p:25,m:30,g:35,match:['Ovo, de galinha, clara, cozida/10minutos']},
+  gema:{label:'unidade',p:12,m:15,g:20,match:['Ovo, de galinha, gema, cozida/10minutos']},
+  omelete:{label:'unidade',p:80,m:120,g:180,match:['Omelete, de queijo']},
+  // bananas
+  banana_prata:{label:'unidade',p:50,m:70,g:90,match:['Banana, prata, crua']},
+  banana_nanica:{label:'unidade',p:70,m:100,g:130,match:['Banana, nanica, crua']},
+  banana_maca:{label:'unidade',p:45,m:60,g:75,match:['Banana, maçã, crua']},
+  banana_terra:{label:'unidade',p:100,m:150,g:220,match:['Banana, da terra, crua','Banana, pacova, crua']},
+  banana_ouro:{label:'unidade',p:25,m:40,g:55,match:['Banana, ouro, crua']},
+  banana_figo:{label:'unidade',p:60,m:80,g:100,match:['Banana, figo, crua']},
+  // frutas
+  maca:{label:'unidade',p:90,m:130,g:180,match:['Maçã, Fuji, com casca, crua','Maçã, Argentina, com casca, crua']},
+  pera:{label:'unidade',p:120,m:160,g:210,match:['Pêra, Williams, crua','Pêra, Park, crua']},
+  laranja:{label:'unidade',p:100,m:150,g:200,match:['Laranja, pêra, crua','Laranja, valência, crua']},
+  laranja_baia:{label:'unidade',p:150,m:200,g:260,match:['Laranja, baía, crua']},
+  laranja_lima:{label:'unidade',p:130,m:160,g:200,match:['Laranja, lima, crua','Laranja, da terra, crua']},
+  tangerina:{label:'unidade',p:110,m:150,g:210,match:['Tangerina, Poncã, crua']},
+  mexerica:{label:'unidade',p:80,m:110,g:140,match:['Mexerica, Rio, crua','Mexerica, Murcote, crua']},
+  limao:{label:'unidade',p:50,m:70,g:100,match:['Limão, tahiti, cru']},
+  kiwi:{label:'unidade',p:60,m:80,g:100,match:['Kiwi, cru']},
+  manga:{label:'unidade',p:210,m:290,g:390,match:['Manga, Tommy Atkins, crua','Manga, Haden, crua']},
+  manga_palmer:{label:'unidade',p:270,m:380,g:490,match:['Manga, Palmer, crua']},
+  mamao_papaia:{label:'unidade',p:250,m:330,g:420,d0:.5,match:['Mamão, Papaia, cru']},
+  mamao_formosa:{label:'fatia',p:100,m:200,g:250,alt:['pedaco'],match:['Mamão, Formosa, cru']},
+  goiaba:{label:'unidade',p:110,m:170,g:230,match:['Goiaba, vermelha, com casca, crua','Goiaba, branca, com casca, crua']},
+  caqui:{label:'unidade',p:100,m:120,g:140,match:['Caqui, chocolate, cru']},
+  pessego:{label:'unidade',p:60,m:90,g:120,match:['Pêssego, Aurora, cru']},
+  ameixa:{label:'unidade',p:30,m:50,g:80,match:['Ameixa, crua']},
+  figo:{label:'unidade',p:30,m:45,g:60,match:['Figo, cru']},
+  abacate:{label:'unidade',p:150,m:300,g:450,d0:.5,match:['Abacate, cru']},
+  caju:{label:'unidade',p:55,m:70,g:90,match:['Caju, cru']},
+  carambola:{label:'unidade',p:80,m:110,g:150,match:['Carambola, crua']},
+  maracuja:{label:'unidade',p:35,m:50,g:70,match:['Maracujá, cru']},
+  pinha:{label:'unidade',p:100,m:165,g:220,match:['Pinha, crua']},
+  coco_verde:{label:'unidade',p:200,m:300,g:400,w:/coco verde/,only:true,match:['Coco, água de']},
+  pupunha:{label:'unidade',p:15,m:20,g:30,d0:3,match:['Pupunha, cozida']},
+  morango:{label:'unidade',p:8,m:12,g:20,d0:8,match:['Morango, cru']},
+  uva:{label:'bago',p:6,m:8,g:12,d0:12,match:['Uva, Itália, crua','Uva, Rubi, crua']},
+  acerola:{label:'unidade',p:6,m:10,g:14,d0:10,match:['Acerola, crua']},
+  melancia:{label:'fatia',p:120,m:200,g:300,alt:['pedaco'],match:['Melancia, crua']},
+  melao:{label:'fatia',p:70,m:120,g:200,alt:['pedaco'],match:['Melão, cru']},
+  abacaxi:{label:'fatia',p:50,m:90,g:120,alt:['rodela'],match:['Abacaxi, cru']},
+  // tubérculos e legumes
+  batata:{label:'unidade',p:70,m:130,g:200,match:['Batata, inglesa, cozida','Batata, inglesa, crua']},
+  batata_doce:{label:'unidade',p:100,m:150,g:250,match:['Batata, doce, cozida','Batata, doce, crua']},
+  mandioquinha:{label:'unidade',p:40,m:70,g:100,match:['Batata, baroa, cozida','Batata, baroa, crua']},
+  cenoura:{label:'unidade',p:60,m:90,g:130,match:['Cenoura, crua','Cenoura, cozida']},
+  tomate:{label:'unidade',p:70,m:100,g:170,match:['Tomate, com semente, cru']},
+  cebola:{label:'unidade',p:70,m:110,g:160,match:['Cebola, crua']},
+  pepino:{label:'unidade',p:120,m:180,g:250,match:['Pepino, cru']},
+  beterraba:{label:'unidade',p:80,m:130,g:180,match:['Beterraba, cozida','Beterraba, crua']},
+  chuchu:{label:'unidade',p:150,m:220,g:300,match:['Chuchu, cozido','Chuchu, cru']},
+  milho_espiga:{label:'espiga',p:80,m:100,g:150,match:['Milho verde, cozido (média)']},
+  pamonha:{label:'unidade',p:100,m:150,g:200,match:['Pamonha, barra para cozimento, pré-cozida']},
+  // pães, biscoitos e massas
+  pao_frances:{label:'unidade',p:35,m:50,g:70,match:['Pão, trigo, francês']},
+  pao_forma:{label:'fatia',p:20,m:25,g:35,d0:2,match:['Pão, trigo, forma, integral','Pão, aveia, forma','Pão, milho, forma','Pão, glúten, forma','Pão, de soja']},
+  pao_sovado:{label:'unidade',p:40,m:60,g:80,match:['Pão, trigo, sovado']},
+  pao_queijo:{label:'unidade',p:20,m:30,g:50,d0:2,match:['Pão, de queijo, assado']},
+  pao_hamburguer:{label:'unidade',p:50,m:60,g:80,match:['Pão, de hambúrguer (média)']},
+  bisnaguinha:{label:'unidade',p:15,m:20,g:25,d0:2,match:['Bisnaguinha (média)']},
+  croissant:{label:'unidade',p:40,m:60,g:90,match:['Croissant (média)']},
+  torrada:{label:'unidade',p:6,m:10,g:15,d0:3,match:['Torrada, pão francês']},
+  biscoito_salgado:{label:'unidade',p:6,m:7,g:9,d0:4,match:['Biscoito, salgado, cream cracker']},
+  biscoito_maisena:{label:'unidade',p:4,m:5,g:6,d0:6,match:['Biscoito, doce, maisena']},
+  biscoito_recheado:{label:'unidade',p:12,m:14,g:16,d0:3,match:['Biscoito, doce, recheado com chocolate','Biscoito, doce, recheado com morango']},
+  biscoito_wafer:{label:'unidade',p:6,m:8,g:10,d0:4,match:['Biscoito, doce, wafer, recheado de chocolate','Biscoito, doce, wafer, recheado de morango']},
+  biscoito_polvilho:{label:'unidade',p:2,m:3,g:5,d0:10,match:['Biscoito, polvilho doce']},
+  tapioca:{label:'unidade',p:60,m:80,g:120,match:['Tapioca, com manteiga']},
+  cuscuz:{label:'fatia',p:70,m:100,g:140,alt:['pedaco'],match:['Cuscuz, de milho, cozido com sal']},
+  cuscuz_paulista:{label:'fatia',p:80,m:120,g:160,alt:['pedaco'],match:['Cuscuz, paulista']},
+  bolo:{label:'fatia',p:40,m:60,g:90,alt:['pedaco'],match:['Bolo, pronto, chocolate','Bolo, pronto, milho','Bolo, pronto, coco','Bolo, pronto, aipim']},
+  pizza:{label:'fatia',p:80,m:110,g:160,alt:['pedaco'],d0:2,match:['Pizza de mussarela (média)']},
+  sanduiche:{label:'unidade',p:100,m:150,g:200,match:['Sanduíche natural (média)']},
+  // salgados
+  coxinha:{label:'unidade',p:40,m:80,g:120,match:['Coxinha de frango, frita']},
+  pastel:{label:'unidade',p:40,m:80,g:150,match:['Pastel, de carne, frito','Pastel, de queijo, frito']},
+  empada:{label:'unidade',p:20,m:55,g:90,match:['Empada de frango, pré-cozida, assada']},
+  quibe:{label:'unidade',p:30,m:60,g:90,match:['Quibe, frito','Quibe, assado']},
+  esfiha:{label:'unidade',p:40,m:80,g:130,match:['Esfiha, de carne (média)']},
+  enroladinho:{label:'unidade',p:40,m:80,g:130,match:['Enroladinho de salsicha, assado (média)']},
+  croquete:{label:'unidade',p:20,m:40,g:70,match:['Croquete, de carne, frito']},
+  bolinho_arroz:{label:'unidade',p:15,m:25,g:40,match:['Bolinho de arroz']},
+  acaraje:{label:'unidade',p:80,m:120,g:180,match:['Acarajé']},
+  // carnes, aves, peixes e embutidos
+  salsicha:{label:'unidade',p:30,m:45,g:60,match:['Salsicha (média)']},
+  linguica:{label:'gomo',p:60,m:80,g:100,match:['Linguiça toscana, grelhada (média)','Lingüiça, porco, grelhada','Lingüiça, frango, grelhada']},
+  hamburguer:{label:'unidade',p:56,m:90,g:150,match:['Hambúrguer, bovino, grelhado','Hambúrguer, bovino, frito']},
+  bife:{label:'bife',p:70,m:100,g:150,w:/bife|file|patinho/,alt:['file'],match:['Carne, bovina, patinho, sem gordura, grelhado']},
+  bife_milanesa:{label:'bife',p:70,m:110,g:140,alt:['file'],match:['Carne, bovina, contra-filé, à milanesa','Frango, filé, à milanesa']},
+  bife_figado:{label:'bife',p:70,m:100,g:130,alt:['file'],match:['Carne, bovina, fígado, grelhado']},
+  bisteca:{label:'unidade',p:80,m:120,g:170,alt:['bife'],match:['Porco, bisteca, grelhada']},
+  file_frango:{label:'filé',p:80,m:120,g:170,w:/file|peito|sassami/,alt:['bife'],match:['Frango, peito, sem pele, grelhado','Frango, peito, sem pele, cozido']},
+  coxa_frango:{label:'unidade',p:40,m:55,g:75,match:['Frango, coxa, sem pele, cozida','Frango, coxa, com pele, assada']},
+  sobrecoxa_frango:{label:'unidade',p:50,m:75,g:100,match:['Frango, sobrecoxa, sem pele, assada','Frango, sobrecoxa, com pele, assada']},
+  almondega:{label:'unidade',p:20,m:35,g:50,d0:3,match:['Carne, bovina, almôndegas, fritas']},
+  file_peixe:{label:'filé',p:80,m:120,g:160,alt:['posta','pedaco'],match:['Tilápia, filé, grelhado (média)','Pescada, filé, frito','Merluza, filé, assado','Merluza, filé, frito']},
+  // laticínios, doces e sobremesas
+  iogurte:{label:'pote',p:100,m:170,g:200,match:['Iogurte, natural','Iogurte, natural, desnatado','Iogurte, sabor morango','Iogurte, sabor pêssego']},
+  petit_suisse:{label:'pote',p:40,m:45,g:60,match:['Queijo, petit suisse, morango']},
+  chocolate_barra:{label:'barra',p:25,m:90,g:170,w:/barra/,match:['Chocolate, ao leite','Chocolate, meio amargo','Chocolate, ao leite, com castanha do Pará']},
+  bombom:{label:'unidade',p:15,m:20,g:30,w:/bombom/,only:true,match:['Chocolate, ao leite']},
+  picole:{label:'unidade',p:50,m:70,g:90,match:['Picolé, de fruta (média)','Picolé, de chocolate (média)']},
+  sorvete:{label:'bola',p:40,m:60,g:80,d0:2,match:['Sorvete, de massa (média)']},
+  pacoca:{label:'unidade',p:15,m:20,g:25,match:['Paçoca, amendoim']},
+  pe_moleque:{label:'unidade',p:15,m:20,g:30,match:['Pé-de-moleque, amendoim']},
+  quindim:{label:'unidade',p:25,m:35,g:50,match:['Quindim']},
+  cocada:{label:'unidade',p:20,m:30,g:50,match:['Cocada branca']},
+};
+for(const e of Object.values(UNIT_SIZES)) Object.freeze(e.match), Object.freeze(e);
+Object.freeze(UNIT_SIZES);
+const UNIT_BY_NAME = new Map(); // nome do alimento → [chaves], na ordem da tabela
+for(const [k,e] of Object.entries(UNIT_SIZES)) for(const n of e.match){ if(!UNIT_BY_NAME.has(n)) UNIT_BY_NAME.set(n,[]); UNIT_BY_NAME.get(n).push(k); }
+const unitMeasure = e => norm(e.label).replace(/ /g,'_');
+/* Palavras de tamanho → classe P/M/G (para alimentos por unidade). */
+const SIZE_CLASS = {grande:'g',grandes:'g',grandao:'g',grandona:'g',grandoes:'g',grandonas:'g',gde:'g',gdes:'g',grossa:'g',grosso:'g',grossas:'g',grossos:'g',generosa:'g',generoso:'g',
+  medio:'m',media:'m',medios:'m',medias:'m',med:'m',
+  pequeno:'p',pequena:'p',pequenos:'p',pequenas:'p',pequenininho:'p',pequenininha:'p',pequenininhos:'p',pequenininhas:'p',peq:'p',pqn:'p',fina:'p',fino:'p',finas:'p',finos:'p'};
 
 /* Porção por alimento: u = peso de 1 unidade, d = porção padrão (sem quantidade), m = medidas próprias.
    O regex é testado no termo dito (singular) + nome do alimento. Primeiro que casar vale. */
@@ -517,13 +669,14 @@ function parse(text){
   let ctx={gramCtx:false};
   for(const c of chunks){
     let n=normText(c); if(!n) continue;
-    n=stripMeal(' '+n+' ').replace(/\bum pouco\b/g,'pouco').replace(/\s+/g,' ').trim();
+    n=stripMeal(' '+n+' ').replace(/\bum pouco\b/g,'pouco').replace(/\b(?:de |do |no |em )?tamanho (?=(?:grande|grandes|medio|media|medios|medias|pequeno|pequena|pequenos|pequenas|gde|peq)\b)/g,'').replace(/\s+/g,' ').trim();
     const T=n.split(' ').filter(t=>t && !FILLER.has(t));
     parseTokens(T,out,ctx);
   }
   return out;
 }
 
+function takeSize(it,w){ it.size*=SIZE[w]; if(SIZE_CLASS[w]) it.sc=SIZE_CLASS[w]; }
 function parseTokens(T,out,ctx){
   let i=0;
   while(i<T.length){
@@ -534,8 +687,8 @@ function parseTokens(T,out,ctx){
     // quantidade
     let num=readNumber(T,i);
     if(num){ it.qty=num.v; i=num.next; }
-    if(T[i] in AMOUNT){ it.size*=AMOUNT[T[i]]; i++; }
-    while(SIZE[T[i]]){ it.size*=SIZE[T[i]]; i++; }
+    if(T[i] in AMOUNT){ it.size*=AMOUNT[T[i]]; it.amount=true; i++; }
+    while(SIZE[T[i]]){ takeSize(it,T[i]); i++; }
     // unidade de peso/volume
     if(it.qty!=null && T[i] in WEIGHT_UNITS){ it.gramsPer=WEIGHT_UNITS[T[i]]; i++;
       if(T[i]==='e' && (T[i+1]==='meio'||T[i+1]==='meia')){ it.qty+=.5; i+=2; } ctx.gramCtx=true; }
@@ -544,9 +697,9 @@ function parseTokens(T,out,ctx){
       // "bife"/"filé"/"coxa" podem ser medida ou alimento: medida só se vier "de ..." depois
       if(ms && (!['bife','file'].includes(ms.id) || PREP.has(T[i+ms.len]))){
         it.measure=ms.id; i+=ms.len; if(it.qty==null) it.qty=1;
-        while(SIZE[T[i]]){ it.size*=SIZE[T[i]]; i++; }
+        while(SIZE[T[i]]){ takeSize(it,T[i]); i++; }
         if(T[i]==='e' && (T[i+1]==='meio'||T[i+1]==='meia')){ it.qty+=.5; i+=2; }
-        while(SIZE[T[i]]){ it.size*=SIZE[T[i]]; i++; }
+        while(SIZE[T[i]]){ takeSize(it,T[i]); i++; }
         ctx.gramCtx=false;
       } else if(it.qty!=null){ it.bare=true; it.bareDe=PREP.has(T[i]); }
     }
@@ -566,8 +719,10 @@ function parseTokens(T,out,ctx){
     }
     let words=T.slice(start,i);
     // tamanho dito depois do alimento ("banana grande")
-    words=words.filter(w=>{ if(SIZE[w]){ it.size*=SIZE[w]; return false; } return true; });
+    words=words.filter(w=>{ if(SIZE[w]){ takeSize(it,w); return false; } return true; });
     while(words.length && (PREP.has(words[words.length-1])||CONNECT.has(words[words.length-1]))) words.pop();
+    // "uma laranja e meia" (o "meia" não começa outro alimento)
+    if(it.qty!=null && !it.gramsPer && T[i]==='e' && (T[i+1]==='meia'||T[i+1]==='meio') && (i+2>=T.length || CONNECT.has(T[i+2]))){ it.qty+=.5; i+=2; }
     // quantidade depois do alimento ("arroz 200 gramas")
     if(it.qty==null && i<T.length){
       const pn=readNumber(T,i);
@@ -632,6 +787,23 @@ function profileFor(key,name){
   for(const [re,p] of PROFILES){ if(re.test(s)) return p; }
   return DEFAULT_PROFILE;
 }
+// chave de UNIT_SIZES para um alimento dito (key = termo dito; measure = medida dita, se houver)
+function unitFor(f,key,measure){
+  if(!f || f.src==='prod') return null;
+  const ks=UNIT_BY_NAME.get(f.n); if(!ks) return null;
+  for(const k of ks){ const e=UNIT_SIZES[k];
+    const own = !!measure && measure!=='unidade' && (measure===unitMeasure(e) || (e.alt||[]).includes(measure));
+    if(measure && measure!=='unidade' && !own) continue;
+    if(e.w && !own && !e.w.test(key||'')) continue;
+    return k; }
+  return null;
+}
+function unitInfo(ref){
+  const f=foodFromRef(ref); if(!f || f.src==='prod') return null;
+  const ks=UNIT_BY_NAME.get(f.n)||[]; const k=ks.find(x=>!UNIT_SIZES[x].only); if(!k) return null;
+  const e=UNIT_SIZES[k]; return {k, label:e.label, p:e.p, m:e.m, g:e.g};
+}
+function unitGrams(k,s){ const e=UNIT_SIZES[k]; if(!e) return null; const v=e[s||'m']; return typeof v==='number'?v:null; }
 function emit(it,out,ctx){
   const t=it.words.join(' ');
   const r=resolveWords(it.words);
@@ -640,6 +812,13 @@ function emit(it,out,ctx){
   const prof=profileFor(r.key,name);
   const unit=(r.kind==='food' && r.f.porcao) || prof.u || null;
   let g, est=true;
+  // alimento comido por unidade: contagem × peso da unidade no tamanho dito (P/M/G)
+  if(r.kind==='food' && it.gramsPer==null && !it.amount){
+    const bareGrams = it.qty!=null && !it.measure && it.qty>=10 && (it.bareDe || it.qty>30);
+    const uk = bareGrams ? null : unitFor(r.f, r.key, it.measure);
+    if(uk){ const e=UNIT_SIZES[uk], c=it.qty!=null?it.qty:(e.d0||1), s=it.sc||'m';
+      out.items.push({n:r.f.n, v:r.f.v, src:r.f.src, ref:r.f.ref, g:Math.max(1,Math.round(c*e[s])), t, est:true, u:{k:uk, c, s}}); return; }
+  }
   if(it.gramsPer!=null){ g=it.qty*it.gramsPer; est=false; }
   else if(it.measure){
     const base= it.measure==='unidade' ? (unit||prof.d) : (prof.m&&prof.m[it.measure]) ?? MEASURE_G[it.measure] ?? prof.d;
@@ -655,8 +834,8 @@ function emit(it,out,ctx){
     out.items.push({n:p.f.n, v:p.f.v, src:p.f.src, ref:p.f.ref, g:pg, t, est}); });
 }
 
-const api={init, setContext, parse, search, foodFromRef, norm, detectMeal,
-  _internal:{EXTRAS, SYN, COMBOS, PROFILES, MEASURE_G, normText, sing, tokMatch, readNumber, foodByName, isBad:i=>BAD.has(i)}};
+const api={init, setContext, parse, search, foodFromRef, norm, detectMeal, unitInfo, unitGrams, unitSizes:UNIT_SIZES,
+  _internal:{UNIT_SIZES, SIZE_CLASS, unitFor,EXTRAS, SYN, COMBOS, PROFILES, MEASURE_G, normText, sing, tokMatch, readNumber, foodByName, isBad:i=>BAD.has(i)}};
 if(typeof module!=='undefined' && module.exports) module.exports=api;
 if(root) root.PFParser=api;
 })(typeof window!=='undefined'?window:(typeof globalThis!=='undefined'?globalThis:null));
